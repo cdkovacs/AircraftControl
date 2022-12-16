@@ -1,6 +1,6 @@
-# acheat
+# Aircraft Control
 
-A Particle project named acheat
+A Particle project named Aircraft Control
 
 ## Welcome to your project!
 
