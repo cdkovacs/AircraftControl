@@ -6,110 +6,193 @@
  */
 
 // This #include statement was automatically added by the Particle IDE.
-#include <thermistor-library.h>
-// -----------------------------------
-// Controlling LEDs over the Internet
-// -----------------------------------
+#include <CE_BME280.h>
+#include "google-maps-device-locator.h"
 
-// First, let's create our "shorthand" for the pins
-// Same as in the Blink an LED example:
-// led1 is D0, led2 is D7
+#include "Adafruit_GFX.h"
+#include "Adafruit_SSD1306.h"
 
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+Adafruit_SSD1306 display(0);
+
+int button = D5;
 int heat = D6;
-int eled = D6;
-
-int thermPin = A0;
-
-int thermRes = 1000;
-
 bool heatOn = false;
+int lastButtonState = 0;
 
-int maxElapsedSeconds = 3 * 60 * 60; // 3 hours
+int maxElapsedSeconds = 3 * 60 * 60 * 1000; // 3 hours
+char timerRemainingStr[50];
 
-Thermistor Thermistor(thermPin, thermRes);
-Timer timer(3000, turn_heat_off, true);
-
-// Last time, we only needed to declare pins in the setup function.
-// This time, we are also going to register our Particle function
+Timer timer(maxElapsedSeconds, turn_heat_off, true);
+int timer_end = 0;
+CE_BME280 bme;
+GoogleMapsDeviceLocator locator;
+SerialLogHandler logHandler;
 
 void setup()
 {
 
+  Particle.variable("heatOn", heatOn);
+  Particle.variable("tempC", tempC);
+  Particle.variable("tempF", tempF);
+  Particle.variable("pressureH", pressureH);
+  Particle.variable("pressureM", pressureM);
+  Particle.variable("altitudeM", altitudeM);
+  Particle.variable("altitudeFt", altitudeFt);
+  Particle.variable("humidity", humidity);
+  Particle.variable("timerRemaining", timerRemaining);
   Serial.begin(9600);
 
-  Thermistor.begin();
+  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 128x32)
+  // init done
 
-  // Here's the pin configuration, same as last time
+  display.clearDisplay();
+  display.display();
+  int writeError = display.getWriteError();
+  if(display.getWriteError()) {
+    Log.error("Display write error: %i", writeError);
+  }
+
+  Log.info("BME280 test");
+
+  if (!bme.begin()) {
+    Log.error("Could not find a valid BME280 sensor, check wiring!");
+    while (1);
+  } else {
+    Log.info("BME280 sensor initialized.");
+  }
+
+  locator.withLocateOnce();
+
   pinMode(heat, OUTPUT);
-  pinMode(eled, OUTPUT);
+  Particle.function("toggle_heat", toggle_heat);
 
-  // We are also going to declare a Particle.function so that we can turn the LED on and off from the cloud.
-  Particle.function("heat", ledToggle);
-  Particle.function("temp", readTemp);
-  Particle.function("status", is_heat_on);
-  // This is saying that when we ask the cloud for the function "led", it will employ the function ledToggle() from this app.
+  digitalWrite(heat, LOW);
 
-  // For good measure, let's also make sure both LEDs are off when we start:
-  digitalWrite(eled, LOW);
+  new Thread("display_loop", display_loop);
 }
 
-// Last time, we wanted to continously blink the LED on and off
-// Since we're waiting for input through the cloud this time,
-// we don't actually need to put anything in the loop
+void display_text(char* text) {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println(text);
+  display.display();
+  delay(3000);
+}
 
 void loop()
 {
+  locator.loop();
+  int currentButtonState = digitalRead(button);
+  if(currentButtonState != lastButtonState) {
+    currentButtonState = lastButtonState;
+    Log.info("Button state changed to %d", currentButtonState);
+
+    if(currentButtonState == LOW) {
+    }
+    Particle.publish("button_pressed", String(currentButtonState));
+  }
+}
+
+void display_loop() {
+  display.setTextColor(WHITE);
+  display.setTextSize(2);
+ 
+  float humidity_value = humidity();
+  float tempC_value = tempC(); 
+ 
+  char buffer[50];
+  sprintf(buffer, "Temp/DwPt\n%.0f\370C/%.0f\370C", tempC_value, dewPoint(tempC_value, humidity_value));
+  display_text(buffer);
+  sprintf(buffer, "Altimeter\n%.2f\" Hg", pressureM());
+  display_text(buffer);
+  sprintf(buffer, "Humidity\n%.0f%%", humidity_value);
+  display_text(buffer);
+  if(heatOn) {
+    sprintf(buffer, "Heat Time\n%s", timerRemaining());
+    display_text(buffer);
+  }
 }
 
 void turn_heat_off()
 {
-  Serial.write("Callback::Turning heat off\n");
+  Log.info("Callback::Turning heat off");
 
-  ledToggle("off");
+  toggle_heat("off");
 }
 
-int readTemp(String args) {
-  Serial.printlnf("Temp C: %f", Thermistor.getTempC());
-  Serial.printlnf("Temp F: %f", Thermistor.getTempF());
-  Serial.printlnf("Temp K: %f", Thermistor.getTempK());
-  return Thermistor.getTempC();
+float tempC() {
+  return bme.readTemperature();
 }
 
-int is_heat_on(String args) {
-  return heatOn ? 1 : 0;
+float tempF() {
+  return bme.readTemperature() * 1.8 + 32.0;
 }
 
-int ledToggle(String command)
+float pressureH() {
+  return (bme.readPressure() / 100.0);
+}
+
+float pressureM() {
+  return pressureH() * 0.029529983071445;
+}
+
+float altitudeM() {
+  return bme.readAltitude(SEALEVELPRESSURE_HPA);
+}
+
+float altitudeFt() {
+  return altitudeM() * 3.28084;
+}
+
+float humidity() {
+  return bme.readHumidity();
+}
+
+float dewPoint(float tempC, float humidity) {
+  return tempC - (100 - humidity)/5;
+}
+
+int toggle_heat(String command)
 {
-  /* Particle.functions always take a string as an argument and return an integer.
-    Since we can pass a string, it means that we can give the program commands on how the function should be used.
-    In this case, telling the function "on" will turn the LED on and telling it "off" will turn the LED off.
-    Then, the function returns a value to us to let us know what happened.
-    In this case, it will return 1 for the LEDs turning on, 0 for the LEDs turning off,
-    and -1 if we received a totally bogus command that didn't do anything to the LEDs.
-    */
-
-  if (command == "on")
-  {
-    Serial.write("Turning heat on\n");
-    // digitalWrite(led1,HIGH);
-    // digitalWrite(led2,HIGH);
-    digitalWrite(eled, HIGH);
-    timer.start();
-    return 1;
+  if(command == NULL || command == "") {
+    heatOn = !heatOn;
+  } else {
+    heatOn = command == "on";
   }
-  else if (command == "off")
+    
+  if (heatOn)
   {
-    Serial.write("Turning heat off\n");
-    // digitalWrite(led1,LOW);
-    // digitalWrite(led2,LOW);
-    digitalWrite(eled, LOW);
-    heatOn = false;
-    timer.stop();
-    return 0;
+    Log.info("Turning heat on");
+    digitalWrite(heat, HIGH);
+    startTimer();
+    return 1;
   }
   else
   {
-    return -1;
+    Log.info("Turning heat off");
+    digitalWrite(heat, LOW);
+    stopTimer();
+    return 0;
   }
+}
+
+void startTimer() {
+  timer_end = Time.now() + maxElapsedSeconds / 1000;
+  timer.start();
+}
+
+void stopTimer() {
+  timer.stop();
+}
+
+char* timerRemaining() {
+  int hours, minutes, seconds;
+  seconds = timer_end - Time.now();
+  minutes = seconds / 60;
+  hours = minutes / 60;
+  sprintf(timerRemainingStr, "%i:%2i:%2i", hours, minutes%60, seconds%60);
+  return timerRemainingStr;
 }
