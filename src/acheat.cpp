@@ -40,10 +40,9 @@ char* timerRemaining();
 
 Adafruit_SSD1306 display(0);
 
-int button = D5;
-int heat = D6;
+int button = D6;
+int heat = D5;
 bool heatOn = false;
-int lastButtonState = 0;
 
 int maxElapsedSeconds = 3 * 60 * 60 * 1000; // 3 hours
 char timerRemainingStr[50];
@@ -90,6 +89,8 @@ void setup()
 
   locator.withLocateOnce();
 
+  pinMode(button, INPUT_PULLUP);
+
   pinMode(heat, OUTPUT);
   Particle.function("toggle_heat", toggle_heat);
 
@@ -109,35 +110,38 @@ void display_text(char* text) {
 void loop()
 {
   locator.loop();
+  static int lastButtonState = HIGH;
   int currentButtonState = digitalRead(button);
   if(currentButtonState != lastButtonState) {
-    currentButtonState = lastButtonState;
-    Log.info("Button state changed to %d", currentButtonState);
-
-    if(currentButtonState == LOW) {
+    Log.info("Button state changed from %d to %d", lastButtonState, currentButtonState);
+    lastButtonState = currentButtonState;
+    if(currentButtonState == HIGH) {
+      toggle_heat("");
     }
-    Particle.publish("button_pressed", String(currentButtonState));
   }
 }
 
 void display_loop() {
-  display.setTextColor(WHITE);
-  display.setTextSize(2);
- 
-  float humidity_value = humidity();
-  float tempC_value = tempC(); 
- 
-  char buffer[50];
-  sprintf(buffer, "Temp/DwPt\n%.0f\370C/%.0f\370C", tempC_value, dewPoint(tempC_value, humidity_value));
-  display_text(buffer);
-  sprintf(buffer, "Altimeter\n%.2f\" Hg", pressureM());
-  display_text(buffer);
-  sprintf(buffer, "Humidity\n%.0f%%", humidity_value);
-  display_text(buffer);
-  if(heatOn) {
-    sprintf(buffer, "Heat Time\n%s", timerRemaining());
+  do
+  {
+    display.setTextColor(WHITE);
+    display.setTextSize(2);
+  
+    float humidity_value = humidity();
+    float tempC_value = tempC(); 
+  
+    char buffer[50];
+    sprintf(buffer, "Temp/DwPt\n%.0f\370C/%.0f\370C", tempC_value, dewPoint(tempC_value, humidity_value));
     display_text(buffer);
-  }
+    sprintf(buffer, "Altimeter\n%.2f\" Hg", pressureM());
+    display_text(buffer);
+    sprintf(buffer, "Humidity\n%.0f%%", humidity_value);
+    display_text(buffer);
+    if(heatOn) {
+      sprintf(buffer, "Heat Time\n%s", timerRemaining());
+      display_text(buffer);
+    }
+  } while (true);
 }
 
 void turn_heat_off()
