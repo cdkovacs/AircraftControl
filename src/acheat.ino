@@ -11,6 +11,7 @@
 
 #include "Adafruit_GFX.h"
 #include "Adafruit_SSD1306.h"
+#include "DebounceSwitchRK.h"
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
@@ -28,6 +29,53 @@ int timer_end = 0;
 CE_BME280 bme;
 GoogleMapsDeviceLocator locator;
 SerialLogHandler logHandler;
+
+void startTimer() {
+  timer_end = Time.now() + maxElapsedSeconds / 1000;
+  timer.start();
+}
+
+void stopTimer() {
+  timer.stop();
+}
+
+int toggle_heat(String command)
+{
+  if(command == NULL || command == "") {
+    heatOn = !heatOn;
+  } else {
+    heatOn = command == "on";
+  }
+    
+  if (heatOn)
+  {
+    Log.info("Turning heat on");
+    digitalWrite(heat, HIGH);
+    startTimer();
+    return 1;
+  }
+  else
+  {
+    Log.info("Turning heat off");
+    digitalWrite(heat, LOW);
+    stopTimer();
+    return 0;
+  }
+}
+
+void switchCallback(DebounceSwitchState *switchState, void *context) {
+    // This function is called from a worker thread with a small (1K) stack.
+    // You should avoid any large, lengthy operations here.
+    Log.trace("pin=%d state=%s", switchState->getPin(), switchState->getPressStateName());
+    switch(switchState->getPressState() ){
+      case DebouncePressState::TAP:
+        Log.trace("%d taps", switchState->getTapCount());
+        break;
+      case DebouncePressState::PRESS_START:
+        toggle_heat("");
+        break;
+    }
+}
 
 void setup()
 {
@@ -65,7 +113,9 @@ void setup()
 
   locator.withLocateOnce();
 
-  pinMode(button, INPUT_PULLUP);
+  DebounceSwitch::getInstance()->setup();
+
+  DebounceSwitch::getInstance()->addSwitch(button, DebounceSwitchStyle::PRESS_LOW_PULLUP, switchCallback);
 
   pinMode(heat, OUTPUT);
   Particle.function("toggle_heat", toggle_heat);
@@ -86,15 +136,15 @@ void display_text(char* text) {
 void loop()
 {
   locator.loop();
-  static int lastButtonState = HIGH;
-  int currentButtonState = digitalRead(button);
-  if(currentButtonState != lastButtonState) {
-    Log.info("Button state changed from %d to %d", lastButtonState, currentButtonState);
-    lastButtonState = currentButtonState;
-    if(currentButtonState == HIGH) {
-      toggle_heat("");
-    }
-  }
+  // static int lastButtonState = HIGH;
+  // int currentButtonState = digitalRead(button);
+  // if(currentButtonState != lastButtonState) {
+  //   Log.info("Button state changed from %d to %d", lastButtonState, currentButtonState);
+  //   lastButtonState = currentButtonState;
+  //   if(currentButtonState == HIGH) {
+  //     toggle_heat("");
+  //   }
+  // }
 }
 
 void display_loop() {
@@ -157,39 +207,6 @@ float humidity() {
 
 float dewPoint(float tempC, float humidity) {
   return tempC - (100 - humidity)/5;
-}
-
-int toggle_heat(String command)
-{
-  if(command == NULL || command == "") {
-    heatOn = !heatOn;
-  } else {
-    heatOn = command == "on";
-  }
-    
-  if (heatOn)
-  {
-    Log.info("Turning heat on");
-    digitalWrite(heat, HIGH);
-    startTimer();
-    return 1;
-  }
-  else
-  {
-    Log.info("Turning heat off");
-    digitalWrite(heat, LOW);
-    stopTimer();
-    return 0;
-  }
-}
-
-void startTimer() {
-  timer_end = Time.now() + maxElapsedSeconds / 1000;
-  timer.start();
-}
-
-void stopTimer() {
-  timer.stop();
 }
 
 char* timerRemaining() {
